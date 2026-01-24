@@ -254,7 +254,6 @@ local function addTabBtn(name, target)
 end
 
 addTabBtn("Combat & Visuals", tabMain)
-addTabBtn("Unload", tabUnload)
 
 -- Simple toggle creator
 local function createToggle(parent, text, cb)
@@ -287,26 +286,22 @@ createToggle(tabMain, "Wall ESP", function(v)
     end
 end)
 
--- Unload tab content
-local unlFrame = tabUnload
-local unlBtn = Instance.new("TextButton", unlFrame)
-unlBtn.Size = UDim2.new(1, -10, 0, 40)
-unlBtn.Position = UDim2.new(0, 5, 0, 8)
-unlBtn.BackgroundColor3 = Color3.fromRGB(140, 40, 40)
-unlBtn.Text = "Unload Script"
-unlBtn.TextColor3 = Color3.new(1, 1, 1)
-unlBtn.Font = "GothamBold"
-unlBtn.TextSize = 14
-Instance.new("UICorner", unlBtn)
-
-unlBtn.MouseButton1Click:Connect(function()
+-- UNLOAD BUTTON
+local unl = Instance.new("TextButton", sidebar)
+unl.Size = UDim2.new(0, 110, 0, 35)
+unl.AnchorPoint = Vector2.new(0.5, 0)
+unl.Position = UDim2.new(0.5, 0, 0, 0)
+unl.Text = "Unload Script"
+unl.BackgroundColor3 = Color3.fromRGB(120, 40, 40)
+unl.TextColor3 = Color3.new(1, 1, 1)
+Instance.new("UICorner", unl)
+unl.MouseButton1Click:Connect(function()
     isUnloaded = true
     destroyAllBoxes()
     for m, _ in pairs(activeNPCs) do restoreOriginalSize(m) end
     for _, c in ipairs(wallConnections) do pcall(function() c:Disconnect() end) end
-    if sg and sg.Parent then sg:Destroy() end
+    sg:Destroy()
 end)
-
 --- MAIN LOOPS ---
 
 -- Detect NPCs already present
