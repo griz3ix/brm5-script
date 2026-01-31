@@ -34,6 +34,10 @@ local patchOptions = { recoil = false, firemodes = false }
 local visibleColor = Color3.fromRGB(0, 255, 0)
 local hiddenColor = Color3.fromRGB(255, 0, 0)
 
+-- OPTIMIZATION: Cache for raycast results
+local lastRaycastTime = {}
+local raycastCache = {}
+
 --- HELPERS ---
 local function getRootPart(model)
     return model:FindFirstChild("Root") or model:FindFirstChild("HumanoidRootPart") or model:FindFirstChild("UpperTorso")
@@ -67,6 +71,7 @@ local function destroyAllBoxes()
     trackedParts = {}
 end
 
+-- OPTIMIZATION: Only apply hitbox changes when toggled, not every frame
 local function applySilentHitbox(model, root)
     if appliedSilent[model] then return end
     if not originalSizes[model] then originalSizes[model] = root.Size end
@@ -87,6 +92,13 @@ local function restoreOriginalSize(model)
     appliedSilent[model] = nil
 end
 
+-- OPTIMIZATION: Update hitbox transparency without resizing
+local function updateHitboxVisibility(model, root)
+    if appliedSilent[model] and root then
+        root.Transparency = showHitbox and 0.85 or 1
+    end
+end
+
 local function addNPC(model)
     if activeNPCs[model] or model.Name ~= "Male" or not hasAIChild(model) then return end
     local head = model:FindFirstChild("Head")
@@ -94,6 +106,27 @@ local function addNPC(model)
     if not head or not root then return end
     activeNPCs[model] = { head = head, root = root }
     if wallEnabled then createBoxForPart(head) end
+    
+    -- OPTIMIZATION: Apply silent hitbox immediately if enabled
+    if silentEnabled then
+        applySilentHitbox(model, root)
+    end
+end
+
+-- OPTIMIZATION: Remove NPCs when they're destroyed
+local function removeNPC(model)
+    if not activeNPCs[model] then return end
+    
+    local data = activeNPCs[model]
+    if data.head and data.head:FindFirstChild("Wall_Box") then
+        pcall(function() data.head.Wall_Box:Destroy() end)
+        trackedParts[data.head] = nil
+    end
+    
+    restoreOriginalSize(model)
+    lastRaycastTime[model] = nil
+    raycastCache[model] = nil
+    activeNPCs[model] = nil
 end
 
 local function patchWeapons(options)
@@ -281,11 +314,33 @@ end
 -- Combat & Visuals content (combined)
 createToggle(tabMain, "Silent Hitbox", function(v)
     silentEnabled = v
-    if not v then
-        for m, _ in pairs(activeNPCs) do restoreOriginalSize(m) end
+    if v then
+        -- OPTIMIZATION: Apply to all existing NPCs at once
+        for m, d in pairs(activeNPCs) do
+            if d.root then
+                applySilentHitbox(m, d.root)
+            end
+        end
+    else
+        -- OPTIMIZATION: Restore all at once
+        for m, _ in pairs(activeNPCs) do 
+            restoreOriginalSize(m) 
+        end
     end
 end)
-createToggle(tabMain, "Show Hitbox", function(v) showHitbox = v end)
+
+createToggle(tabMain, "Show Hitbox", function(v) 
+    showHitbox = v 
+    -- OPTIMIZATION: Update visibility without resizing
+    if silentEnabled then
+        for m, d in pairs(activeNPCs) do
+            if d.root then
+                updateHitboxVisibility(m, d.root)
+            end
+        end
+    end
+end)
+
 createToggle(tabMain, "Wall ESP", function(v)
     wallEnabled = v
     if wallEnabled then 
@@ -311,6 +366,7 @@ unl.MouseButton1Click:Connect(function()
     for _, c in ipairs(wallConnections) do pcall(function() c:Disconnect() end) end
     sg:Destroy()
 end)
+
 --- MAIN LOOPS ---
 
 -- Detect NPCs already present
@@ -325,22 +381,53 @@ table.insert(wallConnections, Workspace.ChildAdded:Connect(function(m)
     end
 end))
 
-RunService.RenderStepped:Connect(function()
-    if isUnloaded then return end
+-- OPTIMIZATION: Clean up removed NPCs
+table.insert(wallConnections, Workspace.ChildRemoved:Connect(function(m)
+    if m:IsA("Model") and activeNPCs[m] then
+        removeNPC(m)
+    end
+end))
 
+-- OPTIMIZATION: Use Heartbeat instead of RenderStepped for ESP (less frequent)
+local lastEspUpdate = 0
+RunService.Heartbeat:Connect(function()
+    if isUnloaded or not wallEnabled then return end
+    
+    local currentTime = tick()
+    if currentTime - lastEspUpdate < RAYCAST_COOLDOWN then return end
+    lastEspUpdate = currentTime
+
+    local cameraPos = camera.CFrame.Position
+    local rp = RaycastParams.new()
+    rp.FilterType = Enum.RaycastFilterType.Blacklist
+    
     for m, d in pairs(activeNPCs) do
-        if wallEnabled and d.head and d.head:FindFirstChild("Wall_Box") then
-            local origin = camera.CFrame.Position
-            local rp = RaycastParams.new()
-            rp.FilterType = Enum.RaycastFilterType.Blacklist
+        if d.head and d.head:FindFirstChild("Wall_Box") then
+            -- Check if NPC still exists
+            if not d.head.Parent then
+                removeNPC(m)
+                continue
+            end
+            
             rp.FilterDescendantsInstances = {localPlayer.Character, d.head}
-            local r = Workspace:Raycast(origin, d.head.Position - origin, rp)
+            local r = Workspace:Raycast(cameraPos, d.head.Position - cameraPos, rp)
+            
             if d.head and d.head:FindFirstChild("Wall_Box") then
                 d.head.Wall_Box.Color3 = (not r or (r.Instance and r.Instance:IsDescendantOf(m))) and visibleColor or hiddenColor
             end
         end
+    end
+end)
 
-        if silentEnabled and d.root then applySilentHitbox(m, d.root) end
+-- OPTIMIZATION: Separate lightweight loop only for validating NPCs exist
+RunService.Heartbeat:Connect(function()
+    if isUnloaded then return end
+    
+    -- Validate NPCs still exist (lightweight check)
+    for m, d in pairs(activeNPCs) do
+        if not m.Parent or not d.root or not d.root.Parent then
+            removeNPC(m)
+        end
     end
 end)
 
