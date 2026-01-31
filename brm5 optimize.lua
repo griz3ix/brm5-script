@@ -18,6 +18,7 @@ local TARGET_HITBOX_SIZE = Vector3.new(15, 15, 15)
 local activeNPCs = {}
 local trackedParts = {}
 local originalSizes = {}
+local appliedSilent = {}
 local wallConnections = {}
 
 -- TOGGLES
@@ -67,10 +68,12 @@ local function destroyAllBoxes()
 end
 
 local function applySilentHitbox(model, root)
+    if appliedSilent[model] then return end
     if not originalSizes[model] then originalSizes[model] = root.Size end
     root.Size = TARGET_HITBOX_SIZE
     root.Transparency = showHitbox and 0.85 or 1
     root.CanCollide = true
+    appliedSilent[model] = true
 end
 
 local function restoreOriginalSize(model)
@@ -81,6 +84,7 @@ local function restoreOriginalSize(model)
         root.CanCollide = false
     end
     originalSizes[model] = nil
+    appliedSilent[model] = nil
 end
 
 local function addNPC(model)
@@ -275,7 +279,12 @@ local function createToggle(parent, text, cb)
 end
 
 -- Combat & Visuals content (combined)
-createToggle(tabMain, "Silent Hitbox", function(v) silentEnabled = v end)
+createToggle(tabMain, "Silent Hitbox", function(v)
+    silentEnabled = v
+    if not v then
+        for m, _ in pairs(activeNPCs) do restoreOriginalSize(m) end
+    end
+end)
 createToggle(tabMain, "Show Hitbox", function(v) showHitbox = v end)
 createToggle(tabMain, "Wall ESP", function(v)
     wallEnabled = v
@@ -336,9 +345,12 @@ RunService.RenderStepped:Connect(function()
 end)
 
 -- Toggle GUI visibility with INSERT
-UserInputService.InputBegan:Connect(function(i, gp)
-    if not gp and i.KeyCode == Enum.KeyCode.Insert then
+UserInputService.InputBegan:Connect(function(input, gp)
+    if gp then return end
+    if UserInputService:GetFocusedTextBox() then return end
+
+    if input.KeyCode == Enum.KeyCode.Insert then
         guiVisible = not guiVisible
-        main.Visible = guiVisible
+        sg.Enabled = guiVisible
     end
 end)
